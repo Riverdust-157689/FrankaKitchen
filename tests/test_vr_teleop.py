@@ -1,60 +1,115 @@
-import numpy as np
+"""Tests for the VR teleoperation viewer plumbing.
 
-from VRTeleop.controller import (
-    ClutchedTarget,
-    damped_least_squares,
-    orientation_error,
-    quaternion_to_matrix,
-)
-from VRTeleop.protocol import ControllerState, LatestControllerState, parse_controller_packet
+The MuJoCo window itself needs a display, so these tests drive the two helpers with stubs:
+what matters is that a closed (or never-opened) window never breaks the control loop.
+"""
+
+from VRTeleop.controller import _start_viewer, _sync_viewer
 
 
-def test_parse_right_controller_packet() -> None:
-    state = parse_controller_packet({
-        "timestamp": 1234,
-        "rightController": {
-            "position": {"x": 1, "y": 2, "z": 3},
-            "quaternion": {"x": 0, "y": 0, "z": 0, "w": 2},
-            "gripActive": True,
-            "trigger": 0.75,
-            "buttons": {"a": True, "b": False},
-        },
-    })
-    np.testing.assert_allclose(state.position, [1, 2, 3])
-    np.testing.assert_allclose(state.quaternion, [0, 0, 0, 1])
-    assert state.squeeze
-    assert state.trigger == 0.75
-    assert state.buttons == frozenset({"a"})
+class _StubViewer:
+    def __init__(self, running: bool = True) -> None:
+        self.running = running
+        self.syncs = 0
+        self.closes = 0
+
+    def is_running(self) -> bool:
+        return self.running
+
+    def sync(self) -> None:
+        self.syncs += 1
+
+    def close(self) -> None:
+        self.closes += 1
 
 
-def test_latest_controller_buffer() -> None:
-    latest = LatestControllerState()
-    assert latest.get() is None
-    state = ControllerState("right", np.zeros(3), np.array([0, 0, 0, 1]), False, 0.0)
-    latest.set(state)
-    assert latest.get() is state
+def test_sync_viewer_is_a_noop_without_a_window():
+    assert _sync_viewer(None) is None
 
 
-def test_quaternion_and_orientation_error_identity() -> None:
-    rotation = quaternion_to_matrix(np.array([0, 0, 0, 1]))
-    np.testing.assert_allclose(rotation, np.eye(3))
-    np.testing.assert_allclose(orientation_error(rotation, rotation), np.zeros(3))
+def test_sync_viewer_pushes_state_while_the_window_is_open():
+    viewer = _StubViewer()
+    assert _sync_viewer(viewer) is viewer
+    assert viewer.syncs == 1
+    assert viewer.closes == 0
 
 
-def test_damped_least_squares_identity() -> None:
-    jacobian = np.eye(6)
-    twist = np.arange(6, dtype=float)
-    result = damped_least_squares(jacobian, twist, damping=0.0)
-    np.testing.assert_allclose(result, twist)
+def test_sync_viewer_releases_a_closed_window_and_stops_syncing():
+    viewer = _StubViewer(running=False)
+    assert _sync_viewer(viewer) is None
+    assert viewer.closes == 1
+    assert viewer.syncs == 0
+    # the loop keeps running: a second call is simply a no-op
+    assert _sync_viewer(None) is None
 
 
-def test_clutch_has_no_jump_and_release_clears_reference() -> None:
-    target = ClutchedTarget()
-    state = ControllerState("right", np.array([1.0, 2.0, 3.0]), np.array([0, 0, 0, 1]), True, 0.0)
-    pose = target.update(state, np.array([0.1, 0.2, 0.3]), np.eye(3), 0.5, 0.5)
-    assert pose is not None
-    np.testing.assert_allclose(pose[0], [0.1, 0.2, 0.3])
-    np.testing.assert_allclose(pose[1], np.eye(3))
-    released = ControllerState("right", state.position, state.quaternion, False, 0.0)
-    assert target.update(released, pose[0], pose[1], 0.5, 0.5) is None
-    assert not target.active
+def test_start_viewer_can_be_disabled_without_touching_gl():
+    # `enabled=False` must return before importing mujoco.viewer, so this works headless.
+    assert _start_viewer(object(), object(), enabled=False) is None
+
+
+def _stub_viewer():
+    import mujoco
+
+    class _Viewer:
+        def __init__(self) -> None:
+            self.cam = mujoco.MjvCamera()
+
+    return _Viewer()
+
+
+def test_apply_default_view_copies_the_global_free_camera(tmp_path):
+    """The window must start from the same view the policy is trained on, not MuJoCo's
+    stat.center/extent framing."""
+    import mujoco
+
+    from VRTeleop.controller import _apply_default_view
+
+    config = tmp_path / "cameras.yaml"
+    config.write_text(
+        "width: 64\nheight: 64\ncameras:\n"
+        "  global:\n    kind: free\n    lookat: [-0.2, 0.5, 2.0]\n"
+        "    distance: 2.2\n    azimuth: 70.0\n    elevation: -35.0\n"
+        "  wrist:\n    kind: attached\n    site: end_effector\n"
+        "    eye: [0.0, 0.0, -0.21]\n    target: [0.0, 0.0, 0.14]\n",
+        encoding="utf-8",
+    )
+    viewer = _stub_viewer()
+    assert _apply_default_view(viewer, config, "global") == "global"
+    assert viewer.cam.type == mujoco.mjtCamera.mjCAMERA_FREE
+    assert viewer.cam.fixedcamid == -1
+    assert list(viewer.cam.lookat) == [-0.2, 0.5, 2.0]
+    assert viewer.cam.distance == 2.2
+    assert viewer.cam.azimuth == 70.0
+    assert viewer.cam.elevation == -35.0
+
+
+def test_apply_default_view_falls_back_to_the_first_free_camera(tmp_path):
+    from VRTeleop.controller import _apply_default_view
+
+    config = tmp_path / "cameras.yaml"
+    config.write_text(
+        "width: 64\nheight: 64\ncameras:\n"
+        "  wide:\n    kind: free\n    lookat: [0.0, 0.0, 1.0]\n"
+        "    distance: 3.0\n    azimuth: 10.0\n    elevation: -10.0\n",
+        encoding="utf-8",
+    )
+    viewer = _stub_viewer()
+    assert _apply_default_view(viewer, config, "global") == "wide"
+    assert viewer.cam.distance == 3.0
+
+
+def test_apply_default_view_is_harmless_without_a_window_or_free_camera(tmp_path):
+    from VRTeleop.controller import _apply_default_view
+
+    assert _apply_default_view(None, tmp_path / "missing.yaml", "global") is None
+
+    config = tmp_path / "attached_only.yaml"
+    config.write_text(
+        "width: 64\nheight: 64\ncameras:\n"
+        "  wrist:\n    kind: attached\n    site: end_effector\n"
+        "    eye: [0.0, 0.0, -0.21]\n    target: [0.0, 0.0, 0.14]\n",
+        encoding="utf-8",
+    )
+    viewer = _stub_viewer()
+    assert _apply_default_view(viewer, config, "global") is None

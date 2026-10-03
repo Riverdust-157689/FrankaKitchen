@@ -10,6 +10,21 @@
 
 原工程的 ManiSkill、Pink、双臂串口、HTTPS 私钥和任务截图已经移除。上游许可保留在 `LICENSE`。
 
+## 可视化窗口
+
+启动时会**默认打开一个 MuJoCo 原生 3D 窗口**，可以直接看厨房、机械臂和夹爪的实时状态（和 Quest 里的 WebXR 页面并存，互不影响）。关闭窗口**不会**中断采集——循环会检测到并继续跑，只是不再刷新。
+
+窗口的**默认视角取自 `--camera-config` 里的 `global` 自由相机**（就是策略训练时看的那一路），参数为 `lookat=[-0.2, 0.5, 2.0]`、`distance=2.2`、`azimuth=70`、`elevation=-35`。候选表 `configs/cameras_candidates.yaml` 里同一视角叫 `global_free_default`，两者参数完全相同。
+
+不套用的话，MuJoCo 会按 `model.stat.center/extent`（本项目 extent ≈ 6.67 m）取景，看到的是整个房间，和策略视野完全不是一回事。
+
+```bash
+kitchen-vr-teleop --no-viewer ...                  # 无头机器/不需要窗口时关掉
+kitchen-vr-teleop --viewer-camera global_free_low  # 换一个自由相机作为初始视角
+```
+
+窗口打不开时（没有显示环境、缺 GLFW）会打印一行 `note:` 然后继续无头运行，不会让采集失败。`--dry-run` 不启动窗口，也不启动网络服务。
+
 ## 控制映射
 
 | 输入 | 行为 |
@@ -50,6 +65,8 @@ kitchen-vr-teleop \
   --rotation-scale 0.3 \
   --output-dir data/vr/pilot
 ```
+
+（默认会同时弹出 MuJoCo 窗口；不想要就加 `--no-viewer`。）
 
 在 Quest 浏览器访问 `http://localhost:8000`，点击 **Start controller tracking**。
 

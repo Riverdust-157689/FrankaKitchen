@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -167,9 +168,96 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate environment/Jacobian/cameras without starting network servers.",
+        help="Validate environment/Jacobian/cameras without starting network servers or a window.",
+    )
+    parser.add_argument(
+        "--viewer-camera",
+        default="global",
+        help=(
+            "Which free camera from --camera-config the MuJoCo window should start from "
+            "(default: global, the view the policy is trained on; the candidates file calls "
+            "the same viewpoint global_free_default)."
+        ),
+    )
+    parser.add_argument(
+        "--no-viewer",
+        action="store_true",
+        help=(
+            "Do not open the native MuJoCo window (it is opened by default so you can watch "
+            "the arm while teleoperating). Useful on a headless machine."
+        ),
     )
     return parser.parse_args()
+
+
+def _start_viewer(model: Any, data: Any, enabled: bool):
+    """Open the native MuJoCo window; returns a viewer handle or ``None``.
+
+    Started by default. Both the import and the launch are guarded: on a machine without a
+    display or without GLFW the teleoperation must still run, so a failure here is reported
+    and the session continues headless rather than aborting data collection.
+    """
+    if not enabled:
+        return None
+    try:
+        import mujoco.viewer
+    except Exception as exc:  # pragma: no cover - depends on the local GL/GLFW install
+        print(f"note: MuJoCo viewer unavailable ({type(exc).__name__}: {exc}); no window.")
+        return None
+    try:
+        viewer = mujoco.viewer.launch_passive(model, data)
+    except Exception as exc:  # pragma: no cover - depends on the local display
+        print(f"note: could not open the MuJoCo window ({type(exc).__name__}: {exc}); no window.")
+        return None
+    print("MuJoCo window: open. Closing the window does not stop data collection.")
+    return viewer
+
+
+def _apply_default_view(viewer, camera_config: Path, preferred: str = "global") -> str | None:
+    """Point the MuJoCo window at the config's global free camera. Returns the name used.
+
+    Without this the window starts from MuJoCo's own free camera, which is framed from
+    ``model.stat.center``/``extent`` (extent is ~6.7 m here) and therefore looks nothing like
+    what the policy sees. Setting ``lookat``/``distance``/``azimuth``/``elevation`` to the same
+    values ``CameraRig`` uses makes the window show exactly the ``global`` training view.
+
+    ``preferred`` is the entry to use; in ``configs/cameras_candidates.yaml`` the same viewpoint
+    is called ``global_free_default``. Falls back to the first ``free`` camera in the file.
+    """
+    if viewer is None:
+        return None
+    from franka_kitchen_vla.cameras import load_camera_config
+
+    _, _, cameras = load_camera_config(camera_config)
+    free = [camera for camera in cameras if camera.kind == "free"]
+    chosen = next((camera for camera in free if camera.name == preferred), None)
+    if chosen is None and free:
+        chosen = free[0]
+    if chosen is None:
+        return None
+    values = chosen.values
+    viewer.cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    viewer.cam.fixedcamid = -1
+    viewer.cam.lookat[:] = np.asarray(values["lookat"], dtype=np.float64)
+    viewer.cam.distance = float(values["distance"])
+    viewer.cam.azimuth = float(values["azimuth"])
+    viewer.cam.elevation = float(values["elevation"])
+    return chosen.name
+
+
+def _sync_viewer(viewer):
+    """Push the current simulator state to the window; returns ``None`` once it is closed."""
+    if viewer is None:
+        return None
+    if viewer.is_running():
+        viewer.sync()
+        return viewer
+    try:
+        viewer.close()
+    except Exception:
+        pass
+    print("MuJoCo window closed; continuing without it.")
+    return None
 
 
 def _buttons_edge(current: ControllerState, previous: ControllerState | None, name: str) -> bool:
@@ -216,6 +304,9 @@ def main() -> None:
         env.close()
         return
 
+    viewer = _start_viewer(model, data, enabled=not args.no_viewer)
+    viewer_view = _apply_default_view(viewer, args.camera_config, args.viewer_camera)
+
     latest = LatestControllerState()
     server = TeleopServer(latest, args.host, args.http_port, args.websocket_port)
     server.start()
@@ -224,6 +315,14 @@ def main() -> None:
         f"websocket: ws://localhost:{args.websocket_port}"
     )
     print("Hold squeeze to move; trigger closes gripper; A saves; B discards; Ctrl-C exits.")
+    print(
+        "MuJoCo window: "
+        + (
+            f"open at view {viewer_view!r} (close it freely, collection continues)"
+            if viewer is not None
+            else "off"
+        )
+    )
 
     episode_index = 0
     seed = args.seed
@@ -327,12 +426,18 @@ def main() -> None:
             previous_state = state if fresh else previous_state
             if step == args.max_steps:
                 print("max steps reached: press A to save or B to discard")
+            viewer = _sync_viewer(viewer)  # keeps the window live; no-op once it is closed
             delay = period - (time.monotonic() - started)
             if delay > 0:
                 time.sleep(delay)
     except KeyboardInterrupt:
         print("stopped; current unsaved episode was discarded")
     finally:
+        if viewer is not None:
+            try:
+                viewer.close()
+            except Exception:
+                pass
         server.close()
         if rig is not None:
             rig.close()
