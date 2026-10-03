@@ -1,0 +1,165 @@
+# Candidate cameras for the Franka Kitchen SmolVLA dataset.
+#
+# This file is NOT used by kitchen-to-lerobot; it exists so that
+#   python scripts/preview_cameras.py --camera-config configs/cameras_candidates.yaml
+# can render every option from the same simulation states and you can pick.
+#
+# The key name under `cameras:` becomes the LeRobot feature
+# `observation.images.<key>`, so it is baked into the checkpoint. Once training
+# starts, do not rename it.
+#
+# All `attached` entries use the same three parameters: eye(3) + target(3) + roll(1),
+# expressed in the frame named by `site:` (or `body:`). Only the direction
+# (target - eye) matters, not the distance to the target.
+#
+# Every arm camera here hangs off `site: end_effector`, NOT `body: panda0_link7`.
+# The two frames differ by 21 cm along +z and a 45 degree rotation about z, because
+# the fingers slide along link7's (x = y) diagonal. In the end_effector frame the
+# finger slide axis is exactly [0, +-1, 0], so:
+#   eye x = across the jaws,  eye y = along the jaws,  eye = [0, 0, z] is the
+#   gripper centre line, and roll = 0 / +-90 puts the jaw line vertical / horizontal.
+# Conversion:  v_ee = Rrel^T @ (v_link7 - [0,0,0.21]),  roll_ee ~= roll_link7 + 45.
+#
+# `occlusion` below is the near-black fraction of the central 40% box (0 = clear).
+# All figures use one protocol so they are comparable: partial-v2 episode 0,
+# 5 evenly spaced frames (0/92/184/276/368). Re-measure with different frames and the
+# absolute numbers shift, so trust the ordering more than the digits.
+width: 256
+height: 256
+
+cameras:
+  # ---------------------------------------------------------------- global views
+  # MuJoCo free camera; lookat/distance/azimuth/elevation are the only knobs.
+  global_free_default:
+    kind: free
+    lookat: [-0.2, 0.5, 2.0]
+    distance: 2.2
+    azimuth: 70.0
+    elevation: -35.0
+
+  # Lower and closer: fewer occlusions around the microwave/cabinet, but the
+  # kettle on the left burner can fall out of frame.
+  global_free_low:
+    kind: free
+    lookat: [0.0, 0.6, 1.9]
+    distance: 1.9
+    azimuth: 90.0
+    elevation: -25.0
+
+  # Higher and further back: the whole countertop is visible, less detail per
+  # object. Usually the safer choice for language grounding.
+  global_free_high:
+    kind: free
+    lookat: [-0.3, 0.6, 2.0]
+    distance: 2.6
+    azimuth: 60.0
+    elevation: -45.0
+
+  # Scene camera on the left side of the kitchen (sees the light switch).
+  global_left_cap:
+    kind: fixed
+    name: left_cap
+
+  # Scene camera on the right side (microwave / kettle side).
+  global_right_cap:
+    kind: fixed
+    name: right_cap
+
+  # ------------------------------------------------------------ end-effector views
+  # The selected default; kept identical to configs/cameras.yaml so the two files
+  # never disagree. This is the combination that was swept and fixed:
+  #   --eye-x 0.1 --eye-y 0.0 --eye-z -0.21
+  #   --target-x 0.04 --target-y 0.0 --target-z 0.35  --roll -90
+  wrist:
+    kind: attached
+    site: end_effector
+    eye: [0.1, 0.0, -0.21]
+    target: [0.04, 0.0, 0.35]
+    roll: -90.0
+    reference_camera: left_cap
+
+  # RECOMMENDED for image quality: pull back to the flange. occlusion 0.005.
+  # This is the same camera as link7 eye = [0, 0, -0.20].
+  wrist_deep:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [0.0, 0.0, 0.14]
+    roll: 45.0
+    reference_camera: left_cap
+
+  # Further back still: wider context, but the hand starts to clip the view.
+  # occlusion 0.054.
+  wrist_far:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.51]
+    target: [0.0, 0.0, 0.14]
+    roll: 45.0
+    reference_camera: left_cap
+
+  # Roll only. Rolling is a pure spin: sweeping roll from -90 to +90 leaves both
+  # occlusion and motion essentially unchanged, because it only rotates the image
+  # about the view axis. Positive roll turns the image content counter-clockwise.
+  # Verified: roll = +90 matches the roll = 0 frame rotated 90 deg counter-clockwise
+  # with MSE 0.01. occl 0.004.
+  wrist_roll_75:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [0.0, 0.0, 0.14]
+    roll: 75.0
+    reference_camera: left_cap
+
+  # --- aiming off the gripper axis -------------------------------------------------
+  # Tilting the aim brings the hand into frame, and how much it costs depends on the
+  # direction. The roll values here are the exact ones that reproduce the original
+  # link7-frame poses pixel for pixel (45 degrees only holds for on-axis views).
+
+  # Diagonal toward (-x, +y). Cheapest 18 degree tilt found. occlusion 0.060.
+  wrist_aim_diag_mx_py:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [-0.1273, 0.1273, 0.14]
+    roll: 46.457
+    reference_camera: left_cap
+
+  # Diagonal toward (+x, +y): the same amount of tilt, 4x the occlusion. 0.250.
+  wrist_aim_diag_px_py:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [0.1273, 0.1273, 0.14]
+    roll: 43.543
+    reference_camera: left_cap
+
+  # Pure tilt along the jaw axis (+y). Only expressible cleanly in this frame.
+  # occlusion 0.142.
+  wrist_aim_jaw_py:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [0.0, 0.18, 0.14]
+    roll: 45.0
+    reference_camera: left_cap
+
+  # Pure tilt across the jaws (-x). occlusion 0.110.
+  wrist_aim_side_mx:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.41]
+    target: [-0.18, 0.0, 0.14]
+    roll: 45.0
+    reference_camera: left_cap
+
+  # KEPT AS A COUNTER-EXAMPLE: this eye sits inside the gripper hand mesh, which in
+  # the end_effector frame starts at z ~ -0.18. The camera renders the inside of the
+  # hand as a black blob in the centre. occlusion 0.180.
+  wrist_inside_mesh_BAD:
+    kind: attached
+    site: end_effector
+    eye: [0.0, 0.0, -0.11]
+    target: [0.0, 0.0, 0.14]
+    roll: 45.0
+    reference_camera: left_cap

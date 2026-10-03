@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "franka-kitchen-vla"
+version = "0.1.0"
+description = "Reproduce Franka Kitchen demonstrations and fine-tune SmolVLA."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "gymnasium-robotics==1.4.2",
+  "imageio[ffmpeg]>=2.34",
+  "minari[hdf5,hf]==0.5.3",
+  "mujoco==3.3.7",
+  "numpy>=1.26,<2.3",
+  "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+train = ["lerobot[dataset,smolvla]==0.6.1"]
+teleop = ["websockets>=12,<16"]
+dev = ["pytest>=8,<9"]
+
+[project.scripts]
+kitchen-replay = "franka_kitchen_vla.replay:main"
+kitchen-to-lerobot = "franka_kitchen_vla.convert:main"
+kitchen-eval = "franka_kitchen_vla.evaluate:main"
+kitchen-dataset-report = "franka_kitchen_vla.report:main"
+kitchen-validate = "franka_kitchen_vla.validate:main"
+kitchen-instruction-probe = "franka_kitchen_vla.probe:main"
+kitchen-vr-teleop = "VRTeleop.controller:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/franka_kitchen_vla", "VRTeleop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

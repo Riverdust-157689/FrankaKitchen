@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FrankaKitchen VR Teleop</title>
+    <script src="aframe.min.js"></script>
+    <script src="vr_app.js" defer></script>
+    <style>
+      body { margin: 0; background: #111827; color: #f9fafb; font: 16px system-ui, sans-serif; }
+      #panel { position: fixed; z-index: 10; width: min(520px, calc(100% - 40px));
+        left: 20px; top: 20px; padding: 18px; border-radius: 12px;
+        background: rgba(17,24,39,.92); box-shadow: 0 8px 30px #0008; }
+      #status { color: #fbbf24; font-weight: 700; }
+      button { padding: 12px 18px; border: 0; border-radius: 8px; font-weight: 700;
+        background: #22c55e; color: #052e16; }
+      code { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <section id="panel">
+      <h1>FrankaKitchen VR Teleop</h1>
+      <p id="status">WebSocket: connecting…</p>
+      <p>Hold <b>squeeze</b> to clutch and move. Hold <b>trigger</b> to close the gripper.</p>
+      <p><b>A</b>: save episode · <b>B</b>: discard/retry · release squeeze to recenter.</p>
+      <button id="enter-vr">Start controller tracking</button>
+      <p>Quest over USB: <code>adb reverse tcp:8000 tcp:8000</code> and
+        <code>adb reverse tcp:8001 tcp:8001</code>.</p>
+    </section>
+
+    <a-scene vr-mode-ui="enabled: false" background="color: #111827">
+      <a-entity id="headset" camera look-controls></a-entity>
+      <a-entity id="leftHand" oculus-touch-controls="hand: left; model: false">
+        <a-box color="#ef4444" scale="0.04 0.04 0.12"></a-box>
+      </a-entity>
+      <a-entity id="rightHand" oculus-touch-controls="hand: right; model: false">
+        <a-box color="#3b82f6" scale="0.04 0.04 0.12"></a-box>
+      </a-entity>
+      <a-sphere id="statusSphere" color="#f59e0b" radius="0.08" position="0 1.5 -2"></a-sphere>
+      <a-text value="Squeeze: move | Trigger: gripper | A: save | B: discard"
+        align="center" color="#ffffff" position="0 1.8 -2.5" width="4"></a-text>
+    </a-scene>
+  </body>
+</html>

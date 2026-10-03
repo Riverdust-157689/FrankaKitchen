@@ -1,0 +1,67 @@
+# 修改此文件即可选择相机；键名会成为 LeRobot 的 observation.images.<键名>。
+# 键名一旦开始训练就不能再改（会写进 checkpoint 的 input_features）。
+#
+# ---------------------------------------------------------------------------
+# attached 相机只有三个参数：位置(3) + 注视点(3) + 滚转角(1)
+# ---------------------------------------------------------------------------
+#   eye    [x, y, z]  相机位置，在下面 site/body 指定的**局部坐标系**里
+#   target [x, y, z]  注视点，同一个坐标系
+#   roll   角度(度)    绕视线自转，可省略（默认 0）
+#
+# 只有方向 (target - eye) 有意义：注视点落在同一条射线上的哪个位置都等价。
+# roll = 0 表示"让该坐标系的 +y 在画面里朝上"；正值让画面内容**逆时针**旋转。
+#
+# ---------------------------------------------------------------------------
+# 用 site: end_effector，不要用 body: panda0_link7
+# ---------------------------------------------------------------------------
+# panda0_link7 的 x/y 轴和夹爪自己的轴差 45°：手指沿 link7 的 (x=y) 对角线滑动，
+# 实测滑动轴在 link7 系里是 [±0.7071, ±0.7071, 0]。模型自带一个标准末端坐标系：
+#     site end_effector, body=panda0_link7, site_pos=[0,0,0.21], 绕 z 转 -45°
+# 在它里面手指滑动轴正好是 [0, ±1, 0]，于是：
+#     eye 的 x 分量 = 垂直两指张开方向的偏移
+#     eye 的 y 分量 = 沿两指张开方向的偏移
+#     eye = [0, 0, z] 才真的落在夹爪中线上（用 link7 系时这一点会被 45° 混淆）
+#     roll = 0   -> 两指连线在画面里竖直
+#     roll = ±90 -> 两指连线水平（常规手柄视角）
+#
+# 与 link7 系的换算（v 为任一向量）：
+#     Rrel     = R_link7^T @ R_end_effector
+#     v_ee     = Rrel^T @ (v_link7 - [0, 0, 0.21])
+#     roll_ee ≈ roll_link7 + 45     # 视线沿夹爪轴时严格，视线一偏会漂零点几度
+#
+# ---------------------------------------------------------------------------
+# 手掌网格在 link7 系里占据 z ≈ 0.03–0.24，换算到 EE 系即 z ≈ -0.18 ~ +0.03。
+# 所以 eye 的 z 要 <= -0.18 左右，否则相机会进到网格内部，画面正中渲染出一团黑色内表面。
+#
+# 想自己调请用：python scripts/sweep_camera.py --camera wrist
+width: 256
+height: 256
+cameras:
+  global:
+    # free 是 MuJoCo 自由相机。也可改成 fixed，并设置 name: left_cap/right_cap。
+    kind: free
+    lookat: [-0.2, 0.5, 2.0]
+    distance: 2.2
+    azimuth: 70.0
+    elevation: -35.0
+  wrist:
+    # attached 相机随 panda0_link7 的 end_effector site 运动，坐标都在该 site 的局部系里。
+    #
+    # 这组值是选定的默认配置（由扫描脚本扫出来后固定下来）：
+    #     --eye-x 0.1 --eye-y 0.0 --eye-z -0.21
+    #     --target-x 0.04 --target-y 0.0 --target-z 0.35
+    #     --roll -90
+    #
+    # 语义（end_effector 系里）：eye 的 x 跨过两指、y 沿两指张开方向、z 沿夹爪接近轴
+    # （越负越靠后）；target 只有方向有意义；roll -90 让两指连线在画面里水平。
+    #
+    # 想改就扫：python scripts/sweep_camera.py --camera wrist ... 然后把终端输出的
+    # YAML 片段粘回这里。注意 eye 的 z 要 <= -0.18 左右，否则相机进到手掌网格内部，
+    # 画面正中会出现一团黑色内表面。
+    kind: attached
+    site: end_effector
+    eye: [0.1, 0.0, -0.21]
+    target: [0.04, 0.0, 0.35]
+    roll: -90.0
+    # 只用于初始化视锥；不会决定 attached 相机的最终外参。
+    reference_camera: left_cap
